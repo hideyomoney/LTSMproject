@@ -26,32 +26,137 @@ def create_sequences(data, sequence_length):
         y.append(data[i+sequence_length])  # target is the next value after the sequence
     return np.array(x), np.array(y)
 
-# sigmoid and tanh activation functions
+# sigmoid and tanh activation functions with derivatives
 def sigmoid(x):
-    return 1 / (1 + np.exp(-x))
+    return 1 / (1 + np.exp(-np.clip(x, -500, 500)))  # clip to prevent overflow
+
+def sigmoid_derivative(x):
+    s = sigmoid(x)
+    return s * (1 - s)
 
 def tanh(x):
-    return np.tanh(x)
+    return np.tanh(np.clip(x, -500, 500))  # clip to prevent overflow
 
-#forward pass for one sequence
+def tanh_derivative(x):
+    t = tanh(x)
+    return 1 - t * t
+
+# Forward pass for one sequence with state storage for back propagation
 def forward_one_sequence(sequence_input, W_input, W_hidden, bias_gates, W_output, bias_output):
-    hidden_state = np.zeros((1, hidden_size))  # hidden state
-    cell_state = np.zeros((1, hidden_size))    # cell state
+    # Initialize the states and storage for back propagation
+    hidden_states = np.zeros((sequence_length + 1, hidden_size))
+    cell_states = np.zeros((sequence_length + 1, hidden_size))
+
+    # Store gate values and intermediate computations for back propagation
+    input_gates = np.zeros((sequence_length, hidden_size))
+    forget_gates = np.zeros((sequence_length, hidden_size))
+    output_gates = np.zeros((sequence_length, hidden_size))
+    candidates = np.zeros((sequence_length, hidden_size))
+    gate_inputs = np.zeros((sequence_length, 4 * hidden_size))
+    tanh_cell_states = np.zeros((sequence_length, hidden_size))
 
     for t in range(sequence_length):
         input_t = sequence_input[t].reshape(1, input_size)
-        gates = input_t @ W_input + hidden_state @ W_hidden + bias_gates
-
+        
+        # 1. Compute the gates
+        # 2. Apply activations
+        # 3. Update cell and hidden states
+        gates = input_t @ W_input + hidden_states[t].reshape(1, -1) @ W_hidden + bias_gates
+        gate_inputs[t] = gates.flatten()
+        
         input_gate = sigmoid(gates[:, :hidden_size])
         forget_gate = sigmoid(gates[:, hidden_size:2*hidden_size])
         output_gate = sigmoid(gates[:, 2*hidden_size:3*hidden_size])
         candidate = tanh(gates[:, 3*hidden_size:])
+        
+        input_gates[t] = input_gate.flatten()
+        forget_gates[t] = forget_gate.flatten()
+        output_gates[t] = output_gate.flatten()
+        candidates[t] = candidate.flatten()
+        
+        cell_states[t + 1] = forget_gate.flatten() * cell_states[t] + input_gate.flatten() * candidate.flatten()
+        tanh_cell_states[t] = tanh(cell_states[t + 1])
+        hidden_states[t + 1] = output_gates[t] * tanh_cell_states[t]
 
-        cell_state = forget_gate * cell_state + input_gate * candidate
-        hidden_state = output_gate * tanh(cell_state)
+    prediction = hidden_states[-1].reshape(1, -1) @ W_output + bias_output
 
-    prediction = hidden_state @ W_output + bias_output  # final prediction
-    return prediction[0, 0], hidden_state  # return both prediction and last hidden state
+    # Store all intermediate values for backprop
+    forward_cache = {
+        'hidden_states': hidden_states,
+        'cell_states': cell_states,
+        'input_gates': input_gates,
+        'forget_gates': forget_gates,
+        'output_gates': output_gates,
+        'candidates': candidates,
+        'gate_inputs': gate_inputs,
+        'tanh_cell_states': tanh_cell_states,
+        'sequence_input': sequence_input
+    }
+    
+    return prediction[0, 0], forward_cache
+
+# Backpropagation through LSTM
+def backward_one_sequence(forward_cache, dL_dy, W_input, W_hidden, W_output):
+    hidden_states = forward_cache['hidden_states']
+    cell_states = forward_cache['cell_states']
+    input_gates = forward_cache['input_gates']
+    forget_gates = forward_cache['forget_gates']
+    output_gates = forward_cache['output_gates']
+    candidates = forward_cache['candidates']
+    gate_inputs = forward_cache['gate_inputs']
+    tanh_cell_states = forward_cache['tanh_cell_states']
+    sequence_input = forward_cache['sequence_input']
+
+    # Initialize gradients
+    dW_input = np.zeros_like(W_input)
+    dW_hidden = np.zeros_like(W_hidden)
+    db_gates = np.zeros((1, 4 * hidden_size))
+    
+    dh_next = (dL_dy.reshape(1, -1) @ W_output.T).flatten()
+    dc_next = np.zeros(hidden_size)
+    
+    # backprop through time
+    for t in reversed(range(sequence_length)):
+        # current hidden and cell state gradients
+        dh = dh_next
+        dc = dc_next
+        
+        # gradients w.r.t. output gate
+        do = dh * tanh_cell_states[t]
+        dc += dh * output_gates[t] * tanh_derivative(cell_states[t + 1])
+        
+        # gradients w.r.t. cell state from previous timestep
+        dc_prev = dc * forget_gates[t]
+        
+        # gradients w.r.t. forget gate
+        df = dc * cell_states[t]
+        
+        # gradients w.r.t. input gate and candidate
+        di = dc * candidates[t]
+        dg = dc * input_gates[t]
+        
+        # gradients w.r.t. gate inputs (before activation)
+        do_input = do * sigmoid_derivative(gate_inputs[t, 2*hidden_size:3*hidden_size])
+        df_input = df * sigmoid_derivative(gate_inputs[t, hidden_size:2*hidden_size])
+        di_input = di * sigmoid_derivative(gate_inputs[t, :hidden_size])
+        dg_input = dg * tanh_derivative(gate_inputs[t, 3*hidden_size:])
+        
+        # concatenate gate gradients
+        dgate = np.concatenate([di_input, df_input, do_input, dg_input])
+        
+        # gradients w.r.t. weights and biases
+        input_t = sequence_input[t].reshape(-1, 1)
+        hidden_prev = hidden_states[t].reshape(-1, 1)
+        
+        dW_input += input_t @ dgate.reshape(1, -1)
+        dW_hidden += hidden_prev @ dgate.reshape(1, -1)
+        db_gates += dgate.reshape(1, -1)
+        
+        # gradients w.r.t. previous hidden state
+        dh_next = (dgate.reshape(1, -1) @ W_hidden.T).flatten()
+        dc_next = dc_prev
+    
+    return dW_input, dW_hidden, db_gates
 
 # prepping input & target data
 close_prices = scaled_df["Close"].values
