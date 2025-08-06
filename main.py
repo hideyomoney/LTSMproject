@@ -173,68 +173,126 @@ W_input = np.random.randn(input_size, 4 * hidden_size) * 0.1  # input to gates
 W_hidden = np.random.randn(hidden_size, 4 * hidden_size) * 0.1  # hidden to gates
 bias_gates = np.zeros((1, 4 * hidden_size))  # gate biases
 
-# manual step-by-step forward pass for first sequence
-first_sequence = x[0].reshape(sequence_length, input_size)
-
-hidden_state = np.zeros((1, hidden_size))
-cell_state = np.zeros((1, hidden_size))
-
-for t in range(sequence_length):
-    input_t = first_sequence[t].reshape(1, input_size)
-    gates = input_t @ W_input + hidden_state @ W_hidden + bias_gates
-
-    input_gate = sigmoid(gates[:, :hidden_size])
-    forget_gate = sigmoid(gates[:, hidden_size:2*hidden_size])
-    output_gate = sigmoid(gates[:, 2*hidden_size:3*hidden_size])
-    candidate = tanh(gates[:, 3*hidden_size:])
-
-    cell_state = forget_gate * cell_state + input_gate * candidate
-    hidden_state = output_gate * tanh(cell_state)
-
-    # output for each time step
-    # print(f"\nTime step {t + 1}")
-    # print("input_t:", input_t)
-    # print("gates:", gates)
-    # print("input gate:", input_gate)
-    # print("forget gate:", forget_gate)
-    # print("output gate:", output_gate)
-    # print("candidate:", candidate)
-    # print("updated cell state:", cell_state)
-    # print("updated hidden state:", hidden_state)
-
 # output layer parameters
 W_output = np.random.randn(hidden_size, 1) * 0.1
 bias_output = np.zeros((1, 1))
 
-# final prediction from last hidden state
-final_prediction = hidden_state @ W_output + bias_output
-print("\npredicted next value (normalized):", final_prediction[0, 0])
+# test initial prediction
+print("Testing initial model before training:")
+first_sequence = x[0].reshape(sequence_length, input_size)
+initial_prediction, _ = forward_one_sequence(first_sequence, W_input, W_hidden, bias_gates, W_output, bias_output)
+print(f"Initial predicted next value (normalized): {initial_prediction:.6f}")
+print(f"Actual next value (normalized): {y[0]:.6f}")
+print(f"Initial error: {abs(initial_prediction - y[0]):.6f}")
+print()
 
-# training loop, updating output layer
-learning_rate = 0.01
-epochs = 10
+# training loop with full backpropagation
+learning_rate = 0.001  # reduced learning rate for stability
+epochs = 50
+gradient_clip_threshold = 1.0  # gradient clipping for numerical stability
+
+print("Training LSTM with full backpropagation...")
+print(f"Dataset size: {len(x)} sequences")
+print(f"Sequence length: {sequence_length}")
+print(f"Hidden size: {hidden_size}")
+print(f"Learning rate: {learning_rate}")
+print(f"Epochs: {epochs}")
+print(f"Gradient clipping: {gradient_clip_threshold}")
+
+def clip_gradients(grad, threshold):
+    """Clip gradients to prevent exploding gradients"""
+    grad_norm = np.linalg.norm(grad)
+    if grad_norm > threshold:
+        grad = grad * (threshold / grad_norm)
+    return grad
 
 for epoch in range(epochs):
     mse_total = 0
+    
+    # accumulate gradients over all sequences
+    dW_input_total = np.zeros_like(W_input)
+    dW_hidden_total = np.zeros_like(W_hidden)
+    db_gates_total = np.zeros_like(bias_gates)
+    dW_output_total = np.zeros_like(W_output)
+    db_output_total = np.zeros_like(bias_output)
 
     for i in range(len(x)):
         sequence_input = x[i].reshape(sequence_length, input_size)
         true_value = y[i]
 
-        # use the function for forward pass
-        predicted_value, final_hidden = forward_one_sequence(sequence_input, W_input, W_hidden, bias_gates, W_output, bias_output)
+        # forward pass
+        predicted_value, forward_cache = forward_one_sequence(sequence_input, W_input, W_hidden, bias_gates, W_output, bias_output)
 
+        # compute loss
         loss = (predicted_value - true_value) ** 2
         mse_total += loss
 
-        # output layer gradient and update
-        dL_dy = 2 * (predicted_value - true_value) #derivative of mse losswith respect to models output
-        dL_dy = np.array([[dL_dy]])  # change to 2d array
+        # compute gradients
+        dL_dy = 2 * (predicted_value - true_value)
+        dL_dy_reshaped = np.array([[dL_dy]])
 
-        dW_output = final_hidden.T @ dL_dy # gradient of loss with respect to output weight matrix
-        db_output = dL_dy #gradient of loss with respect to output bias
+        # output layer gradients
+        final_hidden = forward_cache['hidden_states'][-1].reshape(1, -1)
+        dW_output = final_hidden.T @ dL_dy_reshaped
+        db_output = dL_dy_reshaped
 
-        W_output -= learning_rate * dW_output
-        bias_output -= learning_rate * db_output
+        # lstm gradients through backpropagation
+        dW_input, dW_hidden, db_gates = backward_one_sequence(forward_cache, dL_dy_reshaped, W_input, W_hidden, W_output)
 
-    print(f"epoch {epoch+1}, MSE: {mse_total / len(x)}")
+        # apply gradient clipping
+        dW_input = clip_gradients(dW_input, gradient_clip_threshold)
+        dW_hidden = clip_gradients(dW_hidden, gradient_clip_threshold)
+        db_gates = clip_gradients(db_gates, gradient_clip_threshold)
+        dW_output = clip_gradients(dW_output, gradient_clip_threshold)
+        db_output = clip_gradients(db_output, gradient_clip_threshold)
+
+        # accumulate gradients
+        dW_input_total += dW_input
+        dW_hidden_total += dW_hidden
+        db_gates_total += db_gates
+        dW_output_total += dW_output
+        db_output_total += db_output
+
+    # update weights with accumulated gradients (mini-batch gradient descent)
+    W_input -= learning_rate * dW_input_total / len(x)
+    W_hidden -= learning_rate * dW_hidden_total / len(x)
+    bias_gates -= learning_rate * db_gates_total / len(x)
+    W_output -= learning_rate * dW_output_total / len(x)
+    bias_output -= learning_rate * db_output_total / len(x)
+
+    avg_mse = mse_total / len(x)
+    if epoch % 5 == 0 or epoch == epochs - 1:
+        print(f"Epoch {epoch+1}/{epochs}, MSE: {avg_mse:.6f}")
+
+print("\nTraining completed!")
+
+# test the model on a few predictions
+print("\nTesting predictions:")
+for i in range(min(5, len(x))):
+    sequence_input = x[i].reshape(sequence_length, input_size)
+    true_value = y[i]
+    predicted_value, _ = forward_one_sequence(sequence_input, W_input, W_hidden, bias_gates, W_output, bias_output)
+    
+    # denormalize for better interpretation
+    true_denorm = scaler.inverse_transform([[0, 0, 0, true_value]])[0, 3]
+    pred_denorm = scaler.inverse_transform([[0, 0, 0, predicted_value]])[0, 3]
+    
+    print(f"Sample {i+1}: True={true_denorm:.2f}, Predicted={pred_denorm:.2f}, Error={abs(true_denorm - pred_denorm):.2f}")
+
+# evaluate on the entire dataset
+print("\nFinal evaluation:")
+total_mse = 0
+total_mae = 0
+for i in range(len(x)):
+    sequence_input = x[i].reshape(sequence_length, input_size)
+    true_value = y[i]
+    predicted_value, _ = forward_one_sequence(sequence_input, W_input, W_hidden, bias_gates, W_output, bias_output)
+    
+    mse = (predicted_value - true_value) ** 2
+    mae = abs(predicted_value - true_value)
+    total_mse += mse
+    total_mae += mae
+
+print(f"Final MSE: {total_mse / len(x):.6f}")
+print(f"Final MAE: {total_mae / len(x):.6f}")
+print(f"Final RMSE: {np.sqrt(total_mse / len(x)):.6f}")
