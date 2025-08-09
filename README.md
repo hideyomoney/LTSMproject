@@ -18,7 +18,8 @@
 |-------------------|------------------|---------|
 | 1 | **Full BPTT LSTM**:<br>Hidden Size = 5<br>Sequence Length = 10<br>Learning Rate = 0.001<br>Epochs = 50<br>Batch Processing = Full Dataset<br>Error Function = MSE<br>Gradient Clipping = 1.0 | Dataset Size = 240 sequences<br>Input Features = Close Price (normalized)<br>Train/Test Split = None (full dataset training)<br>Final MSE = 0.339101<br>Final RMSE = 0.582323<br>Final MAE = 0.546815<br>Convergence = Steady decrease |
 | 2 | **Output-Only Baseline**:<br>Hidden Size = 5<br>Sequence Length = 10<br>Learning Rate = 0.01<br>Epochs = 50<br>LSTM Weights = Fixed<br>Only Output Layer Training | Dataset Size = 240 sequences<br>Train/Test Split = 80:20<br>Training MSE = 0.024034<br>Test MSE = 0.113493<br>Test RMSE = 0.336888<br>Faster convergence but limited capacity |
-| 3 | **Architecture Comparison**:<br>Full BPTT vs Output-Only<br>Same dataset and conditions<br>Different learning rates optimized | **Full BPTT**: More complex patterns<br>**Output-Only**: Faster training<br>**Key Finding**: Output-only shows better immediate results on this dataset due to simpler optimization landscape, but full BPTT has greater learning potential |
+| 3 | **Tuned Full BPTT LTSM**:<br>Hidden Size = 5<br>Sequence Length = 20<br>Learning Rate = 0.01<br>Epochs = 100<br>Train/Test Split = 80/20<br>Error Function = MSE<br>Gradient Clipping = 1.0 | Dataset Size = 1236 sequences<br>Final MSE = 0.217947<br>Final RMSE = 0.466848<br>Final MAE = 0.454333<br>Convergence = Steady decrease |
+| 4 | **Architecture Comparison**:<br>Full BPTT vs Output-Only<br>Same dataset and conditions<br>Different learning rates optimized | **Full BPTT**: More complex patterns<br>**Output-Only**: Faster training<br>**Key Finding**: Output-only shows better immediate results on this dataset due to simpler optimization landscape, but full BPTT has greater learning potential |
 _______________
 
 
