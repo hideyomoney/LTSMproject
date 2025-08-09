@@ -81,7 +81,7 @@ $$
 
 ## Results Achieved
 
-- **Full BPTT**: MSE = 0.339, RMSE = 0.582
+- **Full BPTT**: MSE = 0.218, RMSE = 0.467
 - **Output-Only**: MSE = 0.113, RMSE = 0.337
 
 While the output-only training showed better immediate convergence on this specific dataset, the full BPTT implementation provides:
@@ -91,18 +91,14 @@ While the output-only training showed better immediate convergence on this speci
 4. **Scalability** to more complex datasets and longer sequences
 
 
-### 3. Files Modified/Created
+### 3. Compile and Running Instructions
 
-### 1. `main.py`
-- Replaced simple forward pass with caching version
-- Added complete `backward_one_sequence()` function
-- Enhanced training loop with full BPTT
-- Added gradient clipping and better evaluation
+Once in the correct file directory run
 
-### 2. `comparison_experiment.py` (New)
-- Direct comparison between output-only and full BPTT training
-- Same initial conditions for fair comparison
+pip install yfinance pandas numpy scikit-learn
 
-### 3. `output_only_baseline.py` (New)
-- Baseline implementation showing output-only training performance
-- Train/test split for proper evaluation
+then run
+
+python tuned_ltsm.py
+
+This will train and then output the final MSE, RMSE, and MAE of the model.
